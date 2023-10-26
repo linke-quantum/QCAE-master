@@ -1,4 +1,4 @@
-# QCAE-mater
+# QCAE-master
 Implementations for training Quantum Circuit Autoencoder in Qiskit and mindquantum.
 
 # Citation
