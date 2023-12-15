@@ -3,8 +3,7 @@
 # (C) Copyright LINKE 2023.
 #
 # This code is licensed under the Apache License, Version 2.0. You may
-# obtain a copy of th
-# is license in the LICENSE.txt file in the root directory
+# obtain a copy of this license in the LICENSE.txt file in the root directory
 # of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
 #
 # Any modifications or derivative works of this code must retain this
@@ -12,284 +11,273 @@
 # that they have been altered from the originals.
 #
 # -*- coding: utf-8 -*-
-# @Time     : 2023/7/27 15:56
+# @Time     : 2023/12/5 20:52
 # @Author   : deviludier @ LINKE
-# @File     : QCAE.py
+# @File     : qcae.py
 # @Software : PyCharm
-
+import time
+import os
+import json
 import numpy as np
-from itertools import combinations
-
-from mindquantum.simulator import Simulator, fidelity
-from mindquantum.core.circuit import Circuit
-from mindquantum.utils import random_circuit
-from mindquantum.core.gates import I, X, Y, Z, H, RX, RY, RZ, CNOT, Measure, SWAP
-from mindquantum.core.operators import QubitOperator, Hamiltonian
+from qiskit.circuit import QuantumCircuit
+from qiskit.circuit.library import RealAmplitudes
+from qiskit.primitives import Estimator, BackendEstimator
+from qiskit.primitives.utils import bound_circuit_to_instruction
+import qiskit.quantum_info as qi
+from qiskit.quantum_info import SparsePauliOp, partial_trace, state_fidelity
+from qiskit.providers.fake_provider.fake_qasm_backend import FakeQasmBackend
+# from qiskit_ibm_runtime import QiskitRuntimeService
+# service = QiskitRuntimeService()
+# backend = service.backend("ibm_brisbane")
+backend = FakeQasmBackend
 
 from scipy.optimize import minimize
-from mindquantum.algorithm.nisq.chem.hardware_efficient_ansatz import HardwareEfficientAnsatz
+from optimparallel import minimize_parallel
 
-from src.QCAE_state import get_choi_state, get_ME_state
+from qiskit.circuit.random import random_circuit
+
+import matplotlib.pyplot as plt
 
 
 class QCAE:
-    def __init__(self,
-                 num_qubits: int = None,
-                 num_latent: int = None,
-                 num_trash: int = None) -> None:
-        '''
-        initialize qcae model with several qubits numbers;
-        :param num_qubits: the number of qubits of the target circuit(channel) needed to be compressed;
-        :param num_latent: the number of qubits of the latent circuit(channel) after encoding;
-        :param num_trash: the number of qubits of the ``trash" circuit(channel) after encoding;
-        num_qubits = num_latent + num_trash;
-        '''
-        self.num_latent = num_latent
-        self.num_trash = num_trash
-        if num_qubits == None:
-            self.num_qubits = self.num_latent + self.num_trash
-        else:
+    def __init__(
+            self,
+            num_qubits: int = None,
+            num_latent: int = None,
+            num_trash: int = None,
+    ) -> None:
+        if not num_latent is None:
+            self.num_latent = num_latent
+        if not num_trash is None:
+            self.num_trash = num_trash
+        if not num_qubits is None:
             self.num_qubits = num_qubits
-        try:
-            if not (self.num_qubits == self.num_latent + self.num_trash):
-                raise ValueError("num_qubits is the summation of num_latent and num_trash!")
-        except ValueError as e:
-            print("raise exception:", repr(e))
+        else:
+            self.num_qubits = self.num_latent + self.num_trash
         self.pqc_ancila_num = 0
+        self.reps = 5
 
-    def initial_state(self):
+    # RealAmplitudes ansatz
+    def ansatz(self, num_qubits, parameter_prefix=None, reps=None):
         '''
-        prepare the initial state circuit
-        :return: initial_state_circuit : numpy.array
+        :param num_qubit: anzatz的线路的比特数目
+        :param parameter_prefix: 参数名前缀
+        :param reps: RealAmplitudes重复的层数
+        :return: ansatz:含参数量子线路
         '''
-        a = np.ones(2 ** self.num_latent)
-        rho_mixed = np.diag(a)
-        # rho_entangled = np.zeros(shape=(4 ** self.num_trash, 4 ** self.num_trash))
-        # rho_entangled[0][0] = 1
-        # rho_entangled[0][-1] = 1
-        # rho_entangled[-1][0] = 1
-        # rho_entangled[-1][-1] = 1
+        if reps == None:
+            return RealAmplitudes(num_qubits, reps=5, parameter_prefix=parameter_prefix).decompose()
+        else:
+            return RealAmplitudes(num_qubits, reps=reps, parameter_prefix=parameter_prefix).decompose()
 
-        rho_entangled = self.get_ME_state(self.num_trash)
+    # 构造QCAE压缩过程的量子线路
+    def QCAE_circuit(self, target_op):
+        '''
+        :param target_op: 需要执行的目标操作
+        :return: 含参数量子线路
+        '''
+        # 初始化QCAE线路, 比特数目为self.num_latent + self.num_trash：
+        total_qubit = self.num_latent + self.num_trash + self.pqc_ancila_num
+        circuit = QuantumCircuit(total_qubit)
 
-        self.ME_mat = rho_entangled
-        rho_initial = np.kron(rho_entangled, rho_mixed)
-        return rho_initial
+        # 添加encoding 和 decoding线路到输入目标操作的两侧；其中，encoding和decoding线路是含参数量子线路，但是维度要高于含参数量子线路
+        circuit.append(self.ansatz(total_qubit, parameter_prefix='theta', reps=self.reps).decompose(),
+                       range(0, total_qubit))
+        circuit.barrier()
+        circuit.append(target_op, range(self.pqc_ancila_num, self.num_qubits + self.pqc_ancila_num))
+        for i in range(self.pqc_ancila_num):
+            circuit.reset(i)
+        circuit.barrier()
+        circuit.append(self.ansatz(total_qubit, parameter_prefix='beta', reps=self.reps).decompose(),
+                       range(0, total_qubit))
+        circuit.barrier()
+        return circuit
 
-    def get_ME_state(self, num_qubits):
-        qc = Circuit()
+    def get_ME_circuit(self, num_qubits):
+        qc = QuantumCircuit(num_qubits * 2)
         for i in range(num_qubits):
-            qc += H.on(i)
+            qc.h(i)
         for i in range(num_qubits):
-            qc += CNOT.on(i + num_qubits, i)
-        sim = Simulator('mqmatrix', qc.n_qubits)
-        sim.apply_circuit(qc)
-        ME_state = sim.get_qs()
-        return ME_state
-
-    def ansatz(self, num_qubits, param_prefix, reps=5):
-        '''
-        construct the ansatz circuit for the encoding process;
-        :return: ansatz: Circuit
-        '''
-        # circuit = HardwareEfficientAnsatz(n_qubits=num_qubits, single_rot_gate_seq=[RY, RZ], depth=reps)
-        qc = Circuit()
-
-        for rep in range(reps):
-            for i in range(num_qubits):
-                qc += RY(param_prefix + str(i + num_qubits * rep)).on(i)
-                qc += RZ(param_prefix + str(i + num_qubits * (rep + 1))).on(i)
-
-            pair_list = list(combinations([i for i in range(num_qubits)], 2))
-            for pair in pair_list:
-                qc += X.on(pair[1], pair[0])
-
-            for i in range(num_qubits):
-                qc += RY(param_prefix + str(i + (rep + 2) * num_qubits)).on(i)
-                qc += RZ(param_prefix + str(i + (rep + 3) * num_qubits)).on(i)
+            qc.cx(i, i + num_qubits)
         return qc
 
-    def construct_circuit(self, target_op: Circuit):
-        '''
-        construct the circuit in training process;
-        the construction is:
-            initial_state_circuit + encoding_ansatz_left + target_op + encoding_ansatz_right
-        :param: target_op: the circuit(channel needed to process)
-        :return: parameterized quantum circuit need to be training
-        '''
-        encoder_left = self.ansatz(num_qubits=target_op.n_qubits, param_prefix='theta')
-        encoder_right = self.ansatz(num_qubits=target_op.n_qubits, param_prefix='beta')
-        # print(encoder_left.summary())
-        # print(encoder_right)
+    def initial_state_circuit(self):
+        qc = QuantumCircuit(self.num_qubits * 2)
 
-        execute_circuit = Circuit()
-        execute_circuit += encoder_left
-        execute_circuit += target_op
-        execute_circuit += encoder_right
+        ME_qc1 = self.get_ME_circuit(self.num_latent)
+        ME_qc2 = self.get_ME_circuit(self.num_trash)
+        qc.append(ME_qc1, [i for i in range(self.num_latent * 2)])
+        qc.append(ME_qc2, [i for i in range(self.num_latent * 2, self.num_qubits * 2)])
 
-        return execute_circuit
+        return qc
 
-    def ham(self):
+    def hams(self):
+        str = ''
+        for i in range(self.num_qubits * 2):
+            str += 'I'
+
+        d = 4 * (2 ** (self.num_trash - 1))
         hams = []
-        qubit_op = QubitOperator('', 0)
-        for i in range(self.num_latent, self.num_qubits):
+        for i in range(self.num_trash):
             m, n = i, i + self.num_trash
 
-            # h_0 = Hamiltonian(QubitOperator(f'I{m}' + ' ' + f'I{n}', 1 / 4))
-            h_1 = Hamiltonian(QubitOperator(f'Z{m}' + ' ' + f'Z{n}', 1 / 4))
-            h_2 = Hamiltonian(QubitOperator(f'X{m}' + ' ' + f'X{n}', 1 / 4))
-            h_3 = Hamiltonian(QubitOperator(f'Y{m}' + ' ' + f'Y{n}', -1 / 4))
-            # qubit_op += h_1
-            # qubit_op += h_2
-            # qubit_op += h_3
-            # hams.append(h_0)
-            hams.append(h_1)
-            hams.append(h_2)
-            hams.append(h_3)
+            h0 = (str, 1 / d)
 
-        # hams = [Hamiltonian(QubitOperator(f'Z{i}')) for i in [2, 3]]
+            tmp_str = list(str)
+            tmp_str[m] = 'X'
+            tmp_str[n] = 'X'
+            h1 = (''.join(tmp_str), 1 / d)
 
-        self.hams = hams
-        return qubit_op
+            tmp_str = list(str)
+            tmp_str[m] = 'Y'
+            tmp_str[n] = 'Y'
+            h2 = (''.join(tmp_str), -1 / d)
 
-    def cost_func(self, params):
-        expec_sum = 0
+            tmp_str = list(str)
+            tmp_str[m] = 'Z'
+            tmp_str[n] = 'Z'
+            h3 = (''.join(tmp_str), 1 / d)
+
+            hams.append(h0)
+            hams.append(h1)
+            hams.append(h2)
+            hams.append(h3)
+            # print(hams)
+        return SparsePauliOp.from_list(hams)
+
+    def cost_func(self, params=None):
+        infid_list = []
         for target_op in self.target_op_list:
-            circuit = self.construct_circuit(target_op=target_op)
-            for i in range(self.num_qubits, self.num_qubits + self.num_trash):
-                circuit += I.on(i)
+            qc = self.initial_state_circuit()
+            qc.barrier()
+            QCAE_circuit = self.QCAE_circuit(target_op=target_op)
+            qc.append(QCAE_circuit, [i for i in range(self.num_latent, self.num_latent * 2 + self.num_trash)])
 
-            sim = Simulator('mqmatrix', circuit.n_qubits)
+            hams = self.hams()
+            estimator = Estimator()
+            fid1 = estimator.run(circuits=qc,
+                                 observables=[hams],
+                                 parameter_values=params).result().values
 
-            rho_initial = self.initial_state()
-
-            sim.set_qs(rho_initial)
-
-            # print(sim.get_qs())
-            pairs = zip(circuit.params_name, params)
-            pr = {k: v for k, v in pairs}
-            sim.apply_circuit(circuit, pr=pr)
-            # rho_out = sim.get_partial_trace([i for i in range(self.num_latent)])
-            # sim2 = Simulator('mqmatrix', 2*self.num_trash)
-            # sim2.set_qs(self.ME_mat)
-            # ME_rho = sim2.get_qs()
-            # print(ME_rho)
-
-            expectation = 0
-            offset = int(len(self.hams) / 3) / 4
-            for h in self.hams:
-                expectation += sim.get_expectation(h).real
-            expec = offset + expectation
-            expec_sum += expec
-        # return 1 - fidelity(rho_out, ME_rho)
-        return 1 - expec_sum / len(self.target_op_list)
-        # pass
+            infid = 1 - fid1[0]
+            infid_list.append(infid)
+        return np.mean(infid_list)
 
     def callback(self, xk):
-        print('Current iteration:', len(self.hist['x']))
+        # print('Current iteration:', len(self.hist['x']), 'Loss:', self.hist['loss'][-1], 'Validation:', self.hist['validation'][-1][0], np.var(self.hist['validation'][-1][1]))
+        print('Current iteration:', len(self.hist['x']), 'Loss:', self.hist['loss'][-1], 'Validation:', self.hist['validation'][-1])
         self.hist['x'].append(xk.tolist())
         self.hist['loss'].append(self.cost_func(xk))
         self.hist['validation'].append(self.validation(xk))
 
-    def run(self, target_op_list):
+    def run(self, target_op_list: list, max_it=100):
         self.target_op_list = target_op_list
-        circuit = self.construct_circuit(target_op=target_op_list[0])
 
-        initial_point = np.random.random(len(circuit.params_name))
+        execute_qc = self.QCAE_circuit(target_op=target_op_list[0])
 
-        self.validation(initial_point)
+        initial_point = np.random.random(len(execute_qc.parameters))
+        print(self.cost_func(params=initial_point))
 
-        self.ham()
-        loss = self.cost_func(params=initial_point)
-        print(loss)
-        # state = circuit.get_qs(pr=dict(zip(circuit.params_name, initial_point)), ket=True)
+        self.random_state_list = []
+        for i in range(100):
+            state = qi.random.random_density_matrix(2 ** (self.num_qubits + self.num_trash))
+            self.random_state_list.append(state)
 
-        self.hist = {'x': [initial_point.tolist()], 'loss': [self.cost_func(initial_point)], 'validation': [self.validation(initial_point)]}
+        self.hist = {'x': [initial_point.tolist()], 'loss': [self.cost_func(initial_point)],
+                     'validation': [self.validation(initial_point)]}
 
-        res = minimize(self.cost_func, initial_point, method='L-BFGS-B', callback=self.callback, options={'maxiter':100})
+        res = minimize(self.cost_func, initial_point, method='Nelder-Mead', callback=self.callback, tol=1e-20,
+                       options={'maxiter': max_it})
+        # res = minimize_parallel(self.cost_func, initial_point)
         print(res)
-        print("optimal parameters:",self.hist['x'])
+        print("optimal parameters:", self.hist['x'][-1])
         print("training loss:", self.hist['loss'])
         print('Validation:', self.hist['validation'])
-        pass
 
-    def validation(self, params):
-        validation_sum = 0
-        fid_list = []
-        for target_op in self.target_op_list:
-            circuit = self.construct_circuit(target_op=target_op)
-            # print(sim.get_qs())
-            pairs = zip(circuit.params_name, params)
-            pr = {k: v for k, v in pairs}
-            qc = circuit.apply_value(pr=pr)
-            choi_state = get_choi_state(qc)
+        # path = '../results/exp1/noiseless' + str(len(self.target_op_list)) + '-pqc/' + str(self.num_qubits) + '-qubit/'
+        # if not os.path.exists(path):
+        #     os.makedirs(path)
+        # with open(path + str(self.num_qubits) + '-' + str(self.num_latent) + '-mu' + str(mu) + '-sigma' + str(sigma) + '.json', 'w') as file:
+        #     json.dump(self.hist, file)
+        #
+        # # 关闭文件
+        # file.close()
+        #
+        # validation = [data[0] for data in self.hist['validation']]
+        # plt.plot(self.hist['loss'])
+        # plt.plot(validation)
+        # plt.show()
 
-            sim = Simulator('mqmatrix', circuit.n_qubits * 2)
-            sim.set_qs(choi_state)
+    def validation_swap_circuit(self, num_qubits):
+        qc = QuantumCircuit(num_qubits * 2)
+        for i in range(num_qubits):
+            qc.swap(i, i + num_qubits)
+        return qc
 
-            partial_trace_list = [i for i in range(self.num_latent, self.num_qubits)]
-            for i in range(self.num_qubits + self.num_latent, self.num_qubits * 2):
-                partial_trace_list.append(i)
-            reduced_choi_state = sim.get_partial_trace(partial_trace_list)
-
-            # print(reduced_choi_state)
-
-            ME_state = get_ME_state(self.num_trash)
-
-            half_recover_state = np.kron(ME_state, reduced_choi_state)
-
-            self.recover_swap_circuit()
-            # print(self.swap_qc)
-
-            sim.reset()
-            sim.set_qs(half_recover_state)
-            sim.apply_circuit(self.swap_qc)
-
-            recover_state = sim.get_qs()
-
-            # print(recover_state)
-
-            fid_list.append(fidelity(choi_state, recover_state))
-        validation_sum = np.mean(fid_list)
-
-        return validation_sum, fid_list
+    def circuit_to_choi_state(self, qc):
+        cir = QuantumCircuit(2 * qc.num_qubits)
+        for i in range(qc.num_qubits):
+            cir.h(i)
+        for i in range(qc.num_qubits):
+            cir.cx(i, i + qc.num_qubits)
+        cir.append(qc, [i for i in range(qc.num_qubits, 2*qc.num_qubits)])
+        return qi.Statevector.from_instruction(cir)
 
     def recover_swap_circuit(self):
-        """
-
-        :return:
-        """
-        swap_circuit = Circuit()
-        for i in range(2 * self.num_qubits + 2 * self.pqc_ancila_num):
-            swap_circuit += I.on(i)
+        swap_circuit = QuantumCircuit(2*self.num_qubits + 2*self.pqc_ancila_num)
         a = self.num_latent + self.pqc_ancila_num
         b = self.num_trash
         for i in range(a):
             for j in range(b):
-                swap_circuit += SWAP.on([2 * self.num_qubits + 2 * self.pqc_ancila_num - 2 * self.num_trash - 1 - i + j,
-                                         2 * self.num_qubits + 2 * self.pqc_ancila_num - 2 * self.num_trash + j - i])
+                swap_circuit.swap(2*self.num_qubits+2*self.pqc_ancila_num-2*self.num_trash - 1 - i + j, 2*self.num_qubits+2*self.pqc_ancila_num - 2*self.num_trash + j - i)
         # print(swap_circuit)
         self.swap_qc = swap_circuit
         return swap_circuit
 
+    def validation(self, params):
+        return 0
+        ME_circuit = QuantumCircuit(2*self.num_trash)
+        for i in range(self.num_trash):
+            ME_circuit.h(i)
+        for i in range(self.num_trash):
+            ME_circuit.cx(i, i+self.num_trash)
+        ME_state = qi.DensityMatrix.from_instruction(ME_circuit)
+        fid_list = []
+        for target_op in self.target_op_list:
+            qc = self.QCAE_circuit(target_op=target_op)
+            qc = qc.assign_parameters(parameters=params)
+            choi_state = self.circuit_to_choi_state(qc)
+
+            partial_trace_list = []
+            for i in range(self.num_latent + self.pqc_ancila_num,
+                           self.num_latent + self.num_trash + self.pqc_ancila_num):
+                partial_trace_list.append(i)
+            for i in range(2 * self.num_latent + self.num_trash + 2 * self.pqc_ancila_num,
+                           2 * self.num_latent + 2 * self.num_trash + 2 * self.pqc_ancila_num):
+                partial_trace_list.append(i)
+            reduced_choi_state = partial_trace(choi_state, partial_trace_list)
+
+            tmp_half_recovery_choi_state = ME_state.tensor(reduced_choi_state)
+
+            self.recover_swap_circuit()
+
+            half_recovery_choi_state = tmp_half_recovery_choi_state.evolve(self.swap_qc)
+            fid = state_fidelity(choi_state, half_recovery_choi_state)
+            fid_list.append(fid)
+        return 1-np.mean(fid_list), fid_list
+
 
 if __name__ == "__main__":
-    print("begin test:")
-    num_latent, num_trash = 1, 1
+    num_latent, num_trash = 2, 1
     num_qubits = num_latent + num_trash
     qcae = QCAE(num_latent=num_latent, num_trash=num_trash)
 
+    mu, sigma = 0, 0.2
+    pqc = RealAmplitudes(num_qubits=num_qubits, reps=1)
     target_op_list = []
-    for i in range(2):
-        target_op = random_circuit(num_latent, 10)
-
-        for i in range(num_latent, num_qubits):
-            target_op += I.on(i)
-
-        target_op_list.append(target_op)
+    for i in range(10):
+        params = np.random.normal(mu, sigma, len(pqc.parameters))
+        target_op_list.append(pqc.assign_parameters(parameters=params))
     qcae.run(target_op_list=target_op_list)
+    # qcae.run([QuantumCircuit(num_qubits)])
 
-    # target_op = random_circuit(num_latent, 10)
-    # target_op = Circuit()
-    # target_op += I.on(0)
-    # print(get_choi_state(target_op))
