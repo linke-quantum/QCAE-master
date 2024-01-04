@@ -19,48 +19,111 @@ import numpy as np
 import os
 import json
 from qiskit import QuantumCircuit
+from qiskit.circuit.library import RealAmplitudes
 import qiskit.quantum_info as qi
 
 from src.QCAE import QCAE
+from src.QCAENoise import QCAENoise
 
 from scipy.optimize import minimize
-class QCAEInformationCompression(QCAE):
-    def run(self, target_op_list: list, max_it=100):
-        self.target_op_list = target_op_list
 
-        execute_qc = self.QCAE_circuit(target_op=target_op_list[0])
 
-        initial_point = np.random.random(len(execute_qc.parameters))
-        print(self.cost_func(params=initial_point))
+# ########################################################################################################
+# Exp1.1: information compression on small scale, whose goal is to verify the similarity between loss function and validation
+# ########################################################################################################
+# 1. Initilize the latent system size and the trash system size
+num_latent, num_trash = 4, 1
+num_qubits = num_latent+num_trash
 
-        self.random_state_list = []
-        for i in range(100):
-            state = qi.random.random_density_matrix(2 ** (self.num_qubits + self.num_trash))
-            self.random_state_list.append(state)
+# 2. Generate the circuit list need for compression
+mu, sigma = 0, 0.2
+num_circuits = 10
+target_op_list = []
+qc = RealAmplitudes(num_qubits, reps=1).decompose()
+for i in range(num_circuits):
+    params = np.random.normal(mu, sigma, len(qc.parameters))
+    target_op_list.append(qc.assign_parameters(parameters=params))
 
-        self.hist = {'x': [initial_point.tolist()], 'loss': [self.cost_func(initial_point)],
-                     'validation': [self.validation(initial_point)]}
+# 3. Initilize the QCAE and begin train
+qcae = QCAE(num_latent=num_latent, num_trash=num_trash, reps=2)
+res, hist = qcae.run(target_op_list=target_op_list, noValidation=False, max_it=50)
+print("optimal parameters:", hist['x'][-1])
+print("training loss:", hist['loss'])
+print('Validation:', hist['validation'])
 
-        res = minimize(self.cost_func, initial_point, method='L-BFGS-B', callback=self.callback, tol=1e-20,
-                       options={'maxiter': max_it})
-        print(res)
-        print("optimal parameters:", self.hist['x'][-1])
-        print("training loss:", self.hist['loss'])
-        print('Validation:', self.hist['validation'])
+# 4. Save the results.
+path = '../results/exp1/noiseless/SmallScale/' + str(num_circuits) + '-pqc/' + str(
+    num_qubits) + '-qubit/'
+if not os.path.exists(path):
+    os.makedirs(path)
+with open(path + str(num_qubits) + '-' + str(num_latent) + '-mu' + str(mu) + '-sigma' + str(
+        sigma) + '.json', 'w') as file:
+    json.dump(hist, file)
+# 关闭文件
+file.close()
 
-        path = '../results/exp1/noiseless/SmallScale/' + str(len(self.target_op_list)) + '-pqc/' + str(self.num_qubits) + '-qubit/'
-        if not os.path.exists(path):
-            os.makedirs(path)
-        with open(path + str(self.num_qubits) + '-' + str(self.num_latent) + '-mu' + str(mu) + '-sigma' + str(sigma) + '.json', 'w') as file:
-            json.dump(self.hist, file)
-        # 关闭文件
-        file.close()
-        return 0
+# # ########################################################################################################
+# # Exp1.2: information compression on large scale, whose goal is to verify the convergence ability of loss function on large
+# # ########################################################################################################
+# # 1. Initilize the latent system size and the trash system size
+# num_latent, num_trash = 8, 1
+# num_qubits = num_latent + num_trash
+#
+# # 2. Generate the circuit list need for compression
+# mu, sigma = 0, 0.2
+# num_circuits = 10
+# target_op_list = []
+# qc = RealAmplitudes(num_qubits, reps=1).decompose()
+# for i in range(num_circuits):
+#     params = np.random.normal(mu, sigma, len(qc.parameters))
+#     target_op_list.append(qc.assign_parameters(parameters=params))
+#
+# # 3. Initilize the QCAE and begin train
+# qcae = QCAE(num_latent=num_latent, num_trash=num_trash, reps=2)
+# res, hist = qcae.run(target_op_list=target_op_list, noValidation=True, max_it=50)
+#
+# # 4. Save the results.
+# path = '../results/exp1/noiseless/LargeScale/' + str(num_circuits) + '-pqc/' + str(
+#     num_qubits) + '-qubit/'
+# if not os.path.exists(path):
+#     os.makedirs(path)
+# with open(path + str(num_qubits) + '-' + str(num_latent) + '-mu' + str(mu) + '-sigma' + str(
+#         sigma) + '.json', 'w') as file:
+#     json.dump(hist, file)
+# # 关闭文件
+# file.close()
 
-if __name__ == '__main__':
-    num_latent, num_trash = 2,1
-    num_qubits = num_latent+num_trash
-    mu, sigma = 0, 0.2
-    qcae = QCAEInformationCompression(num_latent=num_latent, num_trash=num_trash)
+# # ########################################################################################################
+# # Exp1.3: information compression under noise, whose goal is to verify the convergence ability of loss function under noise environments
+# # ########################################################################################################
+# # 1. Initilize the latent system size and the trash system size
+# num_latent, num_trash = 3, 1
+# num_qubits = num_latent + num_trash
+#
+# # 2. Generate the circuit list need for compression
+# mu, sigma = 0, 0.2
+# num_circuits = 10
+# target_op_list = []
+# qc = RealAmplitudes(num_qubits, reps=1).decompose()
+# for i in range(num_circuits):
+#     params = np.random.normal(mu, sigma, len(qc.parameters))
+#     target_op_list.append(qc.assign_parameters(parameters=params))
+#
+# # 3. Initilize the QCAE and begin train
+# qcae = QCAENoise(num_latent=num_latent, num_trash=num_trash, reps=3)
+# error_name_list = ['depolarizing', 'thermal-relaxation', 'backend', None]
+# error_name = error_name_list[2]
+# res, hist = qcae.run(target_op_list=target_op_list, noValidation=False, max_it=50, error_name=error_name)
+#
+#
+# # 4. Save the results.
+# path = '../results/exp1/noise/' + error_name + '/'+ str(num_circuits) + '-pqc/' + str(
+#     num_qubits) + '-qubit/'
+# if not os.path.exists(path):
+#     os.makedirs(path)
+# with open(path + str(num_qubits) + '-' + str(num_latent) + '-mu' + str(mu) + '-sigma' + str(
+#         sigma) + '.json', 'w') as file:
+#     json.dump(hist, file)
+# # 关闭文件
+# file.close()
 
-    qcae.run(target_op_list=[QuantumCircuit(num_qubits)], max_it=10)
