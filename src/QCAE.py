@@ -21,15 +21,12 @@ import json
 import numpy as np
 from qiskit.circuit import QuantumCircuit
 from qiskit.circuit.library import RealAmplitudes
+from qiskit.circuit.library.n_local.two_local import TwoLocal
 from qiskit.primitives import Estimator, BackendEstimator
 from qiskit.primitives.utils import bound_circuit_to_instruction
 import qiskit.quantum_info as qi
 from qiskit.quantum_info import SparsePauliOp, partial_trace, state_fidelity
 from qiskit.providers.fake_provider.fake_qasm_backend import FakeQasmBackend
-# from qiskit_ibm_runtime import QiskitRuntimeService
-# service = QiskitRuntimeService()
-# backend = service.backend("ibm_brisbane")
-backend = FakeQasmBackend
 
 from scipy.optimize import minimize
 from optimparallel import minimize_parallel
@@ -45,6 +42,7 @@ class QCAE:
             num_qubits: int = None,
             num_latent: int = None,
             num_trash: int = None,
+            reps: int = 5,
     ) -> None:
         if not num_latent is None:
             self.num_latent = num_latent
@@ -55,20 +53,26 @@ class QCAE:
         else:
             self.num_qubits = self.num_latent + self.num_trash
         self.pqc_ancila_num = 0
-        self.reps = 5
+        self.reps = reps
 
     # RealAmplitudes ansatz
-    def ansatz(self, num_qubits, parameter_prefix=None, reps=None):
+    def ansatz(self, num_qubits, parameter_prefix=None, ansatz_name='HardwareEfficient',reps=None):
         '''
         :param num_qubit: anzatz的线路的比特数目
         :param parameter_prefix: 参数名前缀
-        :param reps: RealAmplitudes重复的层数
+        :param reps: ansatz重复的层数
         :return: ansatz:含参数量子线路
         '''
-        if reps == None:
-            return RealAmplitudes(num_qubits, reps=5, parameter_prefix=parameter_prefix).decompose()
-        else:
-            return RealAmplitudes(num_qubits, reps=reps, parameter_prefix=parameter_prefix).decompose()
+        if ansatz_name == 'RealAmplititudes':
+            if reps == None:
+                return RealAmplitudes(num_qubits, reps=5, parameter_prefix=parameter_prefix).decompose()
+            else:
+                return RealAmplitudes(num_qubits, reps=reps, parameter_prefix=parameter_prefix).decompose()
+        elif ansatz_name == 'HardwareEfficient':
+            if reps == None:
+                return TwoLocal(num_qubits=num_qubits, rotation_blocks=['ry', 'rz'], entanglement_blocks='cz', entanglement='full', reps=5, parameter_prefix=parameter_prefix).decompose()
+            else:
+                return TwoLocal(num_qubits=num_qubits, rotation_blocks=['ry', 'rz'], entanglement_blocks='cz', entanglement='full', reps=reps, parameter_prefix=parameter_prefix).decompose()
 
     # 构造QCAE压缩过程的量子线路
     def QCAE_circuit(self, target_op):
@@ -170,7 +174,13 @@ class QCAE:
         self.hist['loss'].append(self.cost_func(xk))
         self.hist['validation'].append(self.validation(xk))
 
-    def run(self, target_op_list: list, max_it=100):
+    def callback_NoValidation(self, xk):
+        # print('Current iteration:', len(self.hist['x']), 'Loss:', self.hist['loss'][-1], 'Validation:', self.hist['validation'][-1][0], np.var(self.hist['validation'][-1][1]))
+        print('Current iteration:', len(self.hist['x']), 'Loss:', self.hist['loss'][-1])
+        self.hist['x'].append(xk.tolist())
+        self.hist['loss'].append(self.cost_func(xk))
+
+    def run(self, target_op_list: list, max_it=100, noValidation=False):
         self.target_op_list = target_op_list
 
         execute_qc = self.QCAE_circuit(target_op=target_op_list[0])
@@ -183,16 +193,24 @@ class QCAE:
             state = qi.random.random_density_matrix(2 ** (self.num_qubits + self.num_trash))
             self.random_state_list.append(state)
 
-        self.hist = {'x': [initial_point.tolist()], 'loss': [self.cost_func(initial_point)],
-                     'validation': [self.validation(initial_point)]}
+        if noValidation:
+            self.hist = {'x': [initial_point.tolist()], 'loss': [self.cost_func(initial_point)]}
 
-        res = minimize(self.cost_func, initial_point, method='Nelder-Mead', callback=self.callback, tol=1e-20,
-                       options={'maxiter': max_it})
+            res = minimize(self.cost_func, initial_point, method='L-BFGS-B', callback=self.callback_NoValidation, tol=1e-20,
+                           options={'maxiter': max_it})
+        else:
+            self.hist = {'x': [initial_point.tolist()], 'loss': [self.cost_func(initial_point)],
+                         'validation': [self.validation(initial_point)]}
+
+            res = minimize(self.cost_func, initial_point, method='L-BFGS-B', callback=self.callback, tol=1e-20,
+                           options={'maxiter': max_it})
         # res = minimize_parallel(self.cost_func, initial_point)
         print(res)
         print("optimal parameters:", self.hist['x'][-1])
         print("training loss:", self.hist['loss'])
-        print('Validation:', self.hist['validation'])
+        # print('Validation:', self.hist['validation'])
+
+        return res, self.hist
 
         # path = '../results/exp1/noiseless' + str(len(self.target_op_list)) + '-pqc/' + str(self.num_qubits) + '-qubit/'
         # if not os.path.exists(path):
@@ -235,7 +253,6 @@ class QCAE:
         return swap_circuit
 
     def validation(self, params):
-        return 0
         ME_circuit = QuantumCircuit(2*self.num_trash)
         for i in range(self.num_trash):
             ME_circuit.h(i)
@@ -268,7 +285,7 @@ class QCAE:
 
 
 if __name__ == "__main__":
-    num_latent, num_trash = 2, 1
+    num_latent, num_trash = 5, 1
     num_qubits = num_latent + num_trash
     qcae = QCAE(num_latent=num_latent, num_trash=num_trash)
 
@@ -278,6 +295,6 @@ if __name__ == "__main__":
     for i in range(10):
         params = np.random.normal(mu, sigma, len(pqc.parameters))
         target_op_list.append(pqc.assign_parameters(parameters=params))
-    qcae.run(target_op_list=target_op_list)
+    qcae.run(target_op_list=target_op_list, noValidation=True)
     # qcae.run([QuantumCircuit(num_qubits)])
 
