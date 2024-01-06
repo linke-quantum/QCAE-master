@@ -21,7 +21,7 @@ import json
 import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
-    path = '../exp3/noise2/depolarizing/100-pqc/4-qubit/' + '4-3-norm(0,0.1)/'
+    path = '../exp3/noise2/depolarizing/depolarizing100-pqc/4-qubit/' + '4-3-norm(0,0.1)/'
     # path = '../exp3/noiseless/depolarizing/40-pqc/4-qubit/' + '4-3-norm(0,0.1)/'
     p_list = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]
     noise_mean = []
