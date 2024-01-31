@@ -1,6 +1,11 @@
 # QCAE: Quantum Circuit AutoEncoder
 Welcome to the QCAE repository! Here, you'll find implementations for training Quantum Circuit Autoencoders in Qiskit and MindQuantum.
 
+# Install packaged
+'''python
+    
+    pip install qiskit==0.45.2 mindquantum=0.9.0
+'''
 # User Guide
 QCAE is a powerful method designed to compress and encode information within quantum circuits. The framework is illustrated below:
 
