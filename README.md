@@ -6,7 +6,7 @@ Welcome to the QCAE repository! Here, you'll find implementations for training Q
 
 '''
 
-pip install qiskit==0.45.2 mindquantum=0.9.0
+    pip install qiskit==0.45.2 mindquantum=0.9.0
 '''
 
 # User Guide
@@ -19,16 +19,16 @@ QCAE utilizes an encoding process to compress information within a $2^n$ dimensi
 
 '''
 
-num_latent, num_trash = 5, 1
-num_qubits = num_latent + num_trash
-qcae = QCAE(num_latent=num_latent, num_trash=num_trash)
-mu, sigma = 0, 0.2
-pqc = RealAmplitudes(num_qubits=num_qubits, reps=1)
-target_op_list = []
-for i in range(10):
-    params = np.random.normal(mu, sigma, len(pqc.parameters))
-    target_op_list.append(pqc.assign_parameters(parameters=params))
-res, hist = qcae.run(target_op_list=target_op_list, noValidation=True)
+    num_latent, num_trash = 5, 1
+    num_qubits = num_latent + num_trash
+    qcae = QCAE(num_latent=num_latent, num_trash=num_trash)
+    mu, sigma = 0, 0.2
+    pqc = RealAmplitudes(num_qubits=num_qubits, reps=1)
+    target_op_list = []
+    for i in range(10):
+        params = np.random.normal(mu, sigma, len(pqc.parameters))
+        target_op_list.append(pqc.assign_parameters(parameters=params))
+    res, hist = qcae.run(target_op_list=target_op_list, noValidation=True)
 '''
 
 Explore the 'experiments' directory for detailed experiments, and check out the results in the 'results' and 'results/figs' directories.
