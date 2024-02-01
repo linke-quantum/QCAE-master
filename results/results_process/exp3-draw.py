@@ -40,15 +40,16 @@ if __name__ == '__main__':
     plt.rcParams['xtick.labelsize'] = 14  # x轴刻度标签字体大小
     plt.rcParams['ytick.labelsize'] = 14  # y轴刻度标签字体大小
 
-    plt.xlabel('The p in the Depolarizing error', fontsize=14)
+    plt.xlabel('p in the Depolarizing error', fontsize=14)
     plt.ylabel('Reconstruction Fidelity', fontsize=14)
     X = [_ for _ in range(len(p_list))]
-    plt.xticks(X, p_list, rotation=20)
-    plt.legend()
+    plt.xticks(X, p_list, fontsize=14, rotation=20)
+    plt.yticks(fontsize=14)
+    plt.legend(fontsize=14)
 
     pathw = '../figs/exp3/'
     if not os.path.exists(pathw):
         os.makedirs(pathw)
     fig_path = pathw + 'exp3-Denoise-impact.pdf'
-    # plt.savefig(fig_path, bbox_inches='tight')
+    plt.savefig(fig_path, bbox_inches='tight')
     plt.show()

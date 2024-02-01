@@ -22,8 +22,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 if __name__ == '__main__':
-    num_qubits, num_latent = 5, 4
-    is_noise = True
+    num_qubits, num_latent = 6, 5
+    is_noise = False
     if is_noise:
         path = '../exp2/noise/depolarizing' + str(num_qubits) + '-qubit/' + str(num_qubits) + '-' + str(num_latent) + '/AnomalyScores.json'
         pathw = "../figs/exp2/depolarizing/"
@@ -41,15 +41,17 @@ if __name__ == '__main__':
     normal_scores = data['Normal score: '][1]
     anomalous_scores = data['Abnormal score: '][1]
     #
-    sns.histplot(data=normal_scores, bins=10, label='Normal')
-    sns.histplot(data=anomalous_scores, bins=10, label='Anomalous')
+    sns.histplot(data=normal_scores, bins=10, color='k', label='Normal')
+    sns.histplot(data=anomalous_scores, bins=10, color='darkorange', label='Anomalous')
     # sns.kdeplot(data=normal_scores)
     # sns.kdeplot(data=anomalous_scores)
     plt.rcParams['xtick.labelsize'] = 14  # x轴刻度标签字体大小
     plt.rcParams['ytick.labelsize'] = 14  # y轴刻度标签字体大小
     plt.xlabel('Anomaly Score', fontsize=14)
     plt.ylabel('Density', fontsize=14)
-    plt.legend()
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.legend(fontsize=14)
     #
 
     if not os.path.exists(pathw):
