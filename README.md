@@ -1,6 +1,7 @@
 # QCAE: Quantum Circuit AutoEncoder
 
-Welcome to the QCAE repository! Here, you'll find implementations for training Quantum Circuit Autoencoders in Qiskit and MindQuantum.
+Welcome to the QCAE repository! Here, you will find implementations for training Quantum Circuit Autoencoders in Qiskit and MindQuantum. The code implemented by MindQuantum is also available at the following link: [https://gitee.com/mindspore/mindquantum/tree/research/paper_with_code/quantum_circuit_autoencoder![image](https://github.com/user-attachments/assets/91304c75-a665-438b-956b-60f156e83936)](https://gitee.com/mindspore/mindquantum/tree/research/paper_with_code/quantum_circuit_autoencoder)
+ 
 
 # Install packaged
 
